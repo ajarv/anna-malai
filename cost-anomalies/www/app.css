@@ -1,0 +1,18 @@
+/* Get a fancy font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
+
+body {
+
+}
+
+/* Change header text to imported font */
+.shiny-input-container {
+  font-size: small;
+  color: #474747;
+  font-family: Roboto,'Courier New', Courier, monospace;
+}
+
+.shiny-input-container .category-name{
+  width: 150px;
+  display: inline-block;
+}
