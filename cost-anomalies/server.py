@@ -10,7 +10,8 @@ import datetime
 from pathlib import Path
 import collections
 import costs_data_svc
-import anomaly_svc
+from shiny.types import NavSetArg
+from typing import List
 
 
 # function that creates our UI based on the data
@@ -34,11 +35,12 @@ def create_ui(cnu_df: pd.DataFrame):
         list(svc_costs[['Service', 'Label']].itertuples(index=False,
                                                         name=None)))
 
-    app_ui = ui.page_fluid(
+    app_ui = ui.page_bootstrap(
         ui.tags.head(
             ui.tags.link(rel="stylesheet", type="text/css", href="app.css"), ),
         # row and column here are functions
         # to aid laying out our page in an organised fashion
+        ui.row(ui.column(8, ui.tags.h3("Cost Anomaly Detector"), offset=1)),
         ui.row(
             ui.column(
                 2,
@@ -53,13 +55,15 @@ def create_ui(cnu_df: pd.DataFrame):
                     format="mm/dd/yy",
                     separator=" - ",
                 ),
-                offset=1),
-            ui.column(
-                3,
                 ui.input_switch("granularity_month",
                                 "Granularity Month / Day"),
                 ui.input_switch("highlight_anomalies",
                                 "Highlight cost intervals with Anomalies"),
+                offset=1),
+            ui.column(
+                8,
+                # an output container in which to render a plot
+                ui.output_ui("title"),
             ),
         ),
         ui.row(
@@ -92,29 +96,25 @@ def create_ui(cnu_df: pd.DataFrame):
                         </span>'''),
                         {},
                     ),
-                ],
-            ),
-            ui.column(
-                2,
-                ui.hr(),
-                ui.input_text("aws_service_feature_group_filter", "Filter:",
-                              ""),
-                ui.input_checkbox_group(
-                    "aws_service_feature_group",
-                    ui.HTML(f'''<span> 
+                    ui.hr(),
+                    ui.input_text("aws_service_feature_group_filter",
+                                  "Filter:", ""),
+                    ui.input_checkbox_group(
+                        "aws_service_feature_group",
+                        ui.HTML(f'''<span> 
                         <span>Service Usage Type</span>  
                         <span class="badge alert-info">Cost</span>
                         |<span class="badge alert-warning text-danger">Anomaly Count</span>
                         <span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Usage Type"></span>
                     </span>'''),
-                    {},
-                ),
+                        {},
+                    ),
+                ],
             ),
             ui.column(
-                6,
+                8,
                 # an output container in which to render a plot
-                ui.output_ui("title"),
-                ui.output_plot("out", width="100%", height="800px"),
+                ui.output_plot("out", width="100%", height="600px"),
                 # ui.output_text_verbatim("txt"),
                 ui.output_text("txt"),
             )))
@@ -423,16 +423,13 @@ def create_server(cnu_df):
             total_amount = cat_sizes['Cost'].sum()
             anomaly_count = cat_sizes['Anomaly'].sum()
             # return f"query : {df_query}<br/>Blended Cost (without discount): {total_amount} USD"
-            return ui.tags.div(
-                ui.tags.p(f"[{' AND '.join(selection)}].",class_="code", ),
-                ui.tags.h5(f"Total Costs: {total_amount:,}", ),
-                ui.tags.p(
-                    f"Usage Anomaly count : {anomaly_count}.",
-                    ui.tags.i(
-                        f"units - one per service usage type per usage week",
-                    )),
-                class_= "title-area"
-            )
+            return ui.tags.div(ui.tags.p(
+                f"[{' AND '.join(selection)}].",
+                class_="code",
+            ),
+                               ui.tags.h5(f"Total Costs: {total_amount:,}", ),
+                               ui.tags.p(f"Anomalies : {anomaly_count}.", ),
+                               class_="title-area")
 
         # @output
         # @render.text
@@ -448,7 +445,7 @@ def create_server(cnu_df):
                 )  # decorator to link this function to the "out" id in the UI
         @render.plot  # a decorator to indicate we want the plot renderer
         @reactive.event(input.aws_service_feature_group,
-                        input.grail_account_group)        
+                        input.highlight_anomalies, input.grail_account_group)
         def plot():
             granularity_month = input.granularity_month()
             highlight_anomalies = input.highlight_anomalies()
