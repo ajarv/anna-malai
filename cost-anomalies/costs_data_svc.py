@@ -162,10 +162,10 @@ def get_anomalies(df,grail_acct,service,usage_type,model='laymans_way'):
     data['Anomaly_Score'] = data_with_anomaly_info['Anomaly_Score']
     return data
 
-def get_anomalies_using_ma(df,grail_acct,service,usage_type,usage_unit):
+def get_anomalies_using_ma(df,grail_acct,service,usage_type):
     df_query = "GrailAccount == @grail_acct"+\
         " and Service == @service  "+\
-        " and UsageType == @usage_type and UsageUnit == @usage_unit" 
+        " and UsageType == @usage_type" 
     data = df.query(df_query).reset_index()[df.columns]
     data_with_anomaly_info = anomaly_svc.detect_anomalies_hist_ma(data,'Cost')
     return data_with_anomaly_info
@@ -180,20 +180,30 @@ def get_cnu_df_with_anomaly_info():
         return cnu_with_anomaly_info
 
     df = get_cnu_df_with_grouped_usages()
-    significant_svc_ut_df = df[['Service', 'UsageType', 'GrailAccount', 'UsageUnit','Cost']]\
-            .groupby(by=['Service', 'UsageType', 'GrailAccount', 'UsageUnit'])\
+    significant_svc_ut_df = df[['Service', 'UsageType', 'GrailAccount', 'Cost']]\
+            .groupby(by=['Service', 'UsageType', 'GrailAccount'])\
             .sum().reset_index()\
             .query('Cost > 0')\
             .sort_values(by='Cost',ascending=False).copy()
 
+    # sv = ('AWS CloudTrail')
+    # ac = ('eng',)
+    # ut = ('USW2-PaidEventsRecorded')
+    # significant_svc_ut_df = significant_svc_ut_df.query('Service in @sv and GrailAccount in @ac and UsageType in @ut')
+
     df_with_anomalies_info_list = []
+    donex = set()
     for index, row in significant_svc_ut_df.iterrows():
         grail_account = row['GrailAccount']
         service = row['Service']
         usage_type = row['UsageType']
-        usage_unit = row['UsageUnit']
-        print(f'{grail_account} | {service} | {usage_type} | {usage_unit}')
-        df_with_anomalies_info_list.append(get_anomalies_using_ma(df,grail_account,service,usage_type,usage_unit))
+        k = f'{grail_account} | {service} | {usage_type}'
+        if k in donex:
+            print("xxx Repeating xxx",k)
+        donex.add(k)
+        print(f'{grail_account} | {service} | {usage_type}')
+        
+        df_with_anomalies_info_list.append(get_anomalies_using_ma(df,grail_account,service,usage_type))
     cnu_with_anomaly_info = pd.concat(df_with_anomalies_info_list)\
         .sort_values(by=['timestamp','Service','UsageType'])
     cnu_with_anomaly_info.to_csv(cnu_with_anomaly_info_path,index=False)

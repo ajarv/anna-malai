@@ -84,7 +84,7 @@ def create_ui(cnu_df: pd.DataFrame):
                         {},
                     ),
                     ui.hr(),
-                    ui.input_text("aws_service_group_filter", "Filter:", ""),
+                    # ui.input_text("aws_service_group_filter", "Filter:", ""),
                     ui.input_checkbox_group(
                         "aws_service_group",
                         ui.HTML(f'''<span> 
@@ -124,10 +124,13 @@ def create_ui(cnu_df: pd.DataFrame):
 # utility function to draw a scatter plot
 def create_plot(df, highlight_anomalies, monthly=False, fill='UsageType'):
     if highlight_anomalies and df['AnomalyCount'].sum() > 0:
-        usage_types_with_anomalies = df[['UsageType', 'AnomalyCount']] \
-            .groupby('UsageType').sum().reset_index() \
-            .query('AnomalyCount > 0')['UsageType'].unique().tolist()
-        df = df.query('UsageType in @usage_types_with_anomalies')
+        anomalies_df = df[['UsageType','GrailAccount' ,'AnomalyCount']] \
+            .groupby(by=['UsageType','GrailAccount']).sum().reset_index() \
+            .query('AnomalyCount > 0')
+        ut_with_anomalies = anomalies_df['UsageType'].unique().tolist()
+        ga_with_anomalies = anomalies_df['GrailAccount'].unique().tolist()
+        df = df.query('UsageType in @ut_with_anomalies and GrailAccount in @ga_with_anomalies')
+
     plot = (gg.ggplot(
         df, gg.aes(x='timestamp', y='Cost', fill=fill, alpha='AnomalyCount')) +
             gg.scale_alpha_continuous(range=(0.2, 1))
@@ -145,18 +148,34 @@ def create_plot(df, highlight_anomalies, monthly=False, fill='UsageType'):
 
 
 def get_cost_and_anomaly_weeks_by_category(category, fdf):
-    cost_sums = fdf \
-        [[category, 'timestamp', 'Cost']] \
-        .groupby(by=[category]).sum().reset_index()
-    anomaly_sums = fdf[fdf['timestamp'].apply(lambda d: d.day_name()) == 'Saturday'] \
-        [[category, 'timestamp', 'Anomaly']] \
-        .groupby(by=[category]).sum().reset_index()
-    sum_df = cost_sums.set_index([category]) \
-        .join(anomaly_sums.set_index([category]), how='left') \
-        .reset_index() \
-        .sort_values(by='Cost', ascending=False)
-    sum_df["Anomaly"] = sum_df["Anomaly"].fillna(0).astype(int)
+    adf = fdf.groupby([category, pd.Grouper(key='timestamp', freq='W-SUN')])[['Cost','Anomaly']]\
+    .sum()\
+    .reset_index()
+
+    
+    avg_cost = adf[adf['Anomaly'] == 0]['Cost'].mean()
+    adf['AnomalyImpact'] = (adf['Cost']-avg_cost) * (adf['Anomaly'] > 0)
+    adf[['AnomalyImpact',category]].groupby(by=[category]).sum()
+    adf['AnomalyCount'] = adf['Anomaly'] > 0
+
+    sum_df = adf[[category,'Cost','AnomalyImpact','AnomalyCount']]\
+        .groupby(by=[category]).sum().reset_index()\
+        .sort_values(by='AnomalyImpact', ascending=False)
     return sum_df
+
+    # cost_sums = fdf \
+    #     [[category, 'timestamp', 'Cost']] \
+    #     .groupby(by=[category]).sum().reset_index()
+
+    # anomaly_sums = fdf[fdf['timestamp'].apply(lambda d: d.day_name()) == 'Saturday'] \
+    #     [[category, 'timestamp', 'Anomaly']] \
+    #     .groupby(by=[category]).sum().reset_index()
+    # sum_df = cost_sums.set_index([category]) \
+    #     .join(anomaly_sums.set_index([category]), how='left') \
+    #     .reset_index() \
+        # .sort_values(by='Cost', ascending=False)
+    # sum_df["Anomaly"] = sum_df["Anomaly"].fillna(0).astype(int)
+    # return sum_df
 
 
 def get_cat_sizes_dict(category, fdf, key_filter):
@@ -165,7 +184,7 @@ def get_cat_sizes_dict(category, fdf, key_filter):
     cat_sizes['Label'] = cat_sizes.apply(lambda row: ui.HTML(f'''<span> 
                 <span class="category-name">{row[category]}</span>  
                 <span class="badge alert-info">$ {row["Cost"]:,}</span>
-                |<span class="badge alert-warning text-danger">{row["Anomaly"]}</span>
+                |<span class="badge alert-warning text-danger">{row["AnomalyCount"]}</span>
             </span>'''),
                                          axis=1)
     cat_dict = dict(cat_sizes[[category, 'Label']].itertuples(index=False,
@@ -220,14 +239,15 @@ def create_server(cnu_df):
 
         # --
         @reactive.Effect
-        @reactive.event(input.date_range, input.grail_account_group,
-                        input.aws_service_group_filter)
+        @reactive.event(input.date_range, input.grail_account_group,)
+                        # input.aws_service_group_filter)
         def _a0_service():
 
             startD, endD = input.date_range()
             old_selected = input.aws_service_group()
             grail_account = input.grail_account_group()
-            key_filter = input.aws_service_group_filter()
+            # key_filter = input.aws_service_group_filter()
+            key_filter = None
             df_query = "timestamp >= @startD and timestamp < @endD and GrailAccount in @grail_account"
             fdf = cnu_df.query(df_query)
 
@@ -273,120 +293,6 @@ def create_server(cnu_df):
                 selected=selected,
             )
 
-        # @reactive.Effect
-        # def _z():
-        #     startD, endD = input.date_range()
-        #     significant_svc_ut_df = costs_data_svc.get_significant_svc_df(
-        #         startD, endD)
-
-        #     svc_costs = significant_svc_ut_df[['Service','Cost']]\
-        #             .groupby('Service').sum().reset_index().sort_values(by='Cost',ascending=False)
-
-        #     svc_costs['Label'] = svc_costs['Service'] + svc_costs[
-        #         'Cost'].apply(lambda x: f"( {x:,} )")
-        #     service_dict = dict(
-        #         list(svc_costs[['Service', 'Label']].itertuples(index=False,
-        #                                                         name=None)))
-
-        #     selected_items = my_session_cache.get('selected_services',\
-        #             [] if not service_dict else list(service_dict.keys())[0])
-
-        #     ui.update_select(
-        #         "service",
-        #         choices=service_dict,
-        #         selected=selected_items,
-        #     )
-
-        #     acct_costs = significant_svc_ut_df[['GrailAccount','Cost']]\
-        #         .groupby('GrailAccount').sum().reset_index().sort_values(by='Cost',ascending=False)
-
-        #     acct_costs['Label'] = acct_costs['GrailAccount'] + acct_costs[
-        #         'Cost'].apply(lambda x: f"( {x:,} )")
-        #     acct_dict = dict(
-        #         list(acct_costs[['GrailAccount',
-        #                          'Label']].itertuples(index=False, name=None)))
-
-        #     selected_items = my_session_cache.get('selected_grail_accounts',\
-        #             [] if not acct_dict else list(acct_dict.keys())[0])
-
-        #     ui.update_select(
-        #         "grail_account",
-        #         choices=acct_dict,
-        #         selected=selected_items,
-        #     )
-
-        # @reactive.Effect
-        # def _a():
-        #     # df_query = f"GrailAccount in {tuple(input.grail_account())} " + \
-        #     #            f" and Service in {tuple(input.service())}"
-
-        #     selected_services = input.service()
-        #     my_session_cache['selected_services'] = selected_services
-
-        #     df_query = f"Service in {tuple(selected_services)}"
-        #     startD, endD = input.date_range()
-        #     significant_svc_ut_df = costs_data_svc.get_significant_svc_df(
-        #         startD, endD)
-        #     significant_svc_ut_df_a = significant_svc_ut_df.query(df_query)[['UsageType','Cost','Anomaly']]\
-        #         .groupby("UsageType").sum().reset_index().copy().sort_values(by='Cost',ascending=False)
-        #     significant_svc_ut_df_a['Label'] = significant_svc_ut_df_a['UsageType']+\
-        #             ' ('+significant_svc_ut_df_a['Cost'].apply(lambda x: f'{x:,}') +' / '+ significant_svc_ut_df_a['Anomaly'].astype(str)  +')'
-        #     utypes_list = list(significant_svc_ut_df_a[['UsageType',
-        #                                                 'Label']].itertuples(
-        #                                                     index=False,
-        #                                                     name=None))
-        #     my_session_cache['utypes_list'] = utypes_list
-
-        #     utype_dict = dict(utypes_list)
-
-        #     selected_items = my_session_cache.get('selected_usage_types',\
-        #             [] if not utype_dict else list(utype_dict.keys())[0])
-
-        #     ui.update_select(
-        #         "usage_type",
-        #         choices=utype_dict,
-        #         selected=selected_items,
-        #     )
-
-        #     ut_tags = set()
-        #     for ut, _ in utypes_list:
-        #         for tok in re.split('[-:.]+', ut):
-        #             ut_tags.add(tok)
-        #     ut_tags = list(ut_tags)
-        #     ui.update_select("usage_type_tags", choices=['ALL'] + ut_tags)
-
-        #     ui.update_select("usage_type_tags_exclude", choices=ut_tags)
-
-        #     pass
-
-        # @reactive.Effect
-        # def _b():
-        #     utypes_list = my_session_cache.get('utypes_list', None)
-        #     if utypes_list is None: return
-
-        #     selected_tags = input.usage_type_tags()
-        #     selected_utypes_list = []
-        #     if 'ALL' in selected_tags:
-        #         selected_utypes_list = [ut for ut, _ in utypes_list]
-        #     else:
-        #         for ut, _ in utypes_list:
-        #             for tag in selected_tags:
-        #                 if tag in ut:
-        #                     selected_utypes_list.append(ut)
-
-        #     exclude_tags = input.usage_type_tags_exclude()
-        #     exclude_set = set()
-        #     for ut in selected_utypes_list:
-        #         for tag in exclude_tags:
-        #             if tag in ut:
-        #                 exclude_set.add(ut)
-        #     selected_utypes = list(set(selected_utypes_list) - exclude_set)
-
-        #     ui.update_select(
-        #         "usage_type",
-        #         selected=selected_utypes,
-        #     )
-
         @output
         @render.ui
         @reactive.event(input.aws_service_group,
@@ -421,25 +327,17 @@ def create_server(cnu_df):
 
             cat_sizes = get_cost_and_anomaly_weeks_by_category(category, sub)
             total_amount = cat_sizes['Cost'].sum()
-            anomaly_count = cat_sizes['Anomaly'].sum()
+            anomaly_count = cat_sizes['AnomalyCount'].sum()
+            anomaly_impact = cat_sizes['AnomalyImpact'].sum().astype(int)
+
             # return f"query : {df_query}<br/>Blended Cost (without discount): {total_amount} USD"
             return ui.tags.div(ui.tags.p(
                 f"[{' AND '.join(selection)}].",
                 class_="code",
             ),
                                ui.tags.h5(f"Total Costs: {total_amount:,}", ),
-                               ui.tags.p(f"Anomalies : {anomaly_count}.", ),
+                               ui.tags.p(f"Anomalies : {anomaly_count}. Cost of Anomalies: {anomaly_impact:,}", ),
                                class_="title-area")
-
-        # @output
-        # @render.text
-        # def txt():
-        #     startD,endD = input.date_range()
-        #     df_query = f"GrailAccount in {tuple(input.grail_account())} " + \
-        #                f" and timestamp >= '{startD}' and timestamp < '{endD}'" + \
-        #                f" and Service in {tuple(input.service())}" + \
-        #                f" and UsageType in {tuple(input.usage_type())}"
-        #     return df_query
 
         @output(id="out"
                 )  # decorator to link this function to the "out" id in the UI

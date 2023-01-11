@@ -26,12 +26,17 @@ body {
 }
 
 
-.shiny-options-group {
-  max-height: 150px;
+
+#grail_account_group .shiny-options-group {
+  max-height: 120px;
+  overflow-y: scroll;
+}
+#aws_service_group .shiny-options-group {
+  max-height: 100px;
+  overflow-y: scroll;
+}
+#aws_service_feature_group .shiny-options-group {
+  max-height: 200px;
   overflow-y: scroll;
 }
 
-.shiny-options-group::-webkit-scrollbar-thumb {
-  background-color: lightblue;
-  outline: 1px solid slategrey;
-}
