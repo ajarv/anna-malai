@@ -114,7 +114,7 @@ def create_ui(cnu_df: pd.DataFrame):
             ui.column(
                 8,
                 # an output container in which to render a plot
-                ui.output_plot("out", width="100%", height="600px"),
+                ui.output_plot("out", width="100%", height="100%"),
                 # ui.output_text_verbatim("txt"),
                 ui.output_text("txt"),
             )))
