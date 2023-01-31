@@ -1,12 +1,29 @@
-from pydoc import classname
 from dash import Dash, html, dcc, Input, Output
 import numpy as np
 import plotly.express as px
 import dash_bootstrap_components as dbc
 import datetime
 import costs_data_svc
+from flask import Flask, session
+import pandas as pd
 
-app = Dash(__name__, external_stylesheets=[dbc.themes.SPACELAB, "main.css"])
+# syntax highlighting light or dark
+light_hljs = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.4.0/styles/stackoverflow-light.min.css"
+dark_hljs = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.4.0/styles/stackoverflow-dark.min.css"
+
+# stylesheet with the .dbc class
+dbc_css = (
+    "https://cdn.jsdelivr.net/gh/AnnMarieW/dash-bootstrap-templates/dbc.min.css"
+)
+
+app = Dash(
+    __name__,
+    external_stylesheets=[
+        dbc.themes.CYBORG, dbc.icons.BOOTSTRAP, dbc.icons.FONT_AWESOME,
+        dbc_css, dark_hljs, "main.css"
+    ],
+)
+app.server.secret_key = 'sformiecekxixnxg'
 
 search_bar = dbc.Row(
     [
@@ -69,20 +86,38 @@ sample_size = html.Div(
 
 cnu_df = costs_data_svc.get_cnu_df_with_anomaly_info()
 
-input_group = html.Div(
+# """
+#         <span>
+#             <span>Service Usage Type</span>
+#             <span class="badge alert-info">Cost</span>
+#             |<span class="badge alert-warning text-danger">Anomaly Count</span>
+#             <span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Usage Type"></span>
+#         </span>
+#         """
+accounts_input_group = html.Div(
     [
-        dbc.Label("AWS Accounts", html_for="accounts"),
-        dcc.Checklist(id="accounts",
-                      options={
-                          'NYC': 'New York City',
-                          'MTL': 'Montreal',
-                          'SF': 'San Francisco'
-                      },
-                      value=['MTL'])
+        dbc.Label(html.Span([
+            html.Span("Grail AWS Account"),
+            html.Span("Cost", className="badge alert-info"),
+            "|",
+            html.Span("Anomaly Count", className="badge alert-danger"),
+            html.Span("",
+                      className="glyphicon glyphicon-question-sign",
+                      title="Grail Account"),
+        ]),
+                  html_for="accounts"),
+        dcc.Checklist(id="accounts", options=[], value=[], inline=False)
     ],
-    className="mt-2",
+    className="mt-2 user-cb-options",
 )
 
+services_input_group = html.Div(
+    [
+        dbc.Label("AWS Services", html_for="services"),
+        dcc.Checklist(id="services", options=[], value=[], inline=False)
+    ],
+    className="mt-2 user-cb-options",
+)
 
 n_bins = html.Div(
     [
@@ -122,17 +157,26 @@ date_picker = html.Div(
     [
         dbc.Label("Date Range", html_for="usage-date-picker-range"),
         dcc.DatePickerRange(id='usage-date-picker-range',
-                            min_date_allowed=datetime.date(1995, 8, 5),
-                            max_date_allowed=datetime.date(2017, 9, 19),
-                            initial_visible_month=datetime.date(2017, 8, 5),
-                            end_date=datetime.date(2017, 8, 25))
+                            min_date_allowed=datetime.date(2021, 12, 1),
+                            max_date_allowed=datetime.date.today(),
+                            start_date=datetime.date(2022, 10, 1),
+                            end_date=datetime.date.today())
     ],
     className="mt-2",
 )
 
 control_panel = dbc.Card(
     dbc.CardBody(
-        [date_picker, sample_size, n_bins, mean, std_dev,input_group],
+        [
+            date_picker,
+            sample_size,
+            n_bins,
+            mean,
+            std_dev,
+            accounts_input_group,
+            services_input_group,
+            html.Button('Update Options', id='update-button'),
+        ],
         className="bg-light",
     ))
 
@@ -146,6 +190,76 @@ app.layout = html.Div([
                            dbc.Col(graph, md=8)]),
                   className="selection-menu")
 ])
+
+
+def get_cost_and_anomaly_weeks_by_category(category, fdf):
+    adf = fdf.groupby([category, pd.Grouper(key='timestamp', freq='W-SUN')])[['Cost','Anomaly']]\
+    .sum()\
+    .reset_index()
+
+    
+    avg_cost = adf[adf['Anomaly'] == 0]['Cost'].mean()
+    adf['AnomalyImpact'] = (adf['Cost']-avg_cost) * (adf['Anomaly'] > 0)
+    adf[['AnomalyImpact',category]].groupby(by=[category]).sum()
+    adf['AnomalyCount'] = adf['Anomaly'] > 0
+
+    sum_df = adf[[category,'Cost','AnomalyImpact','AnomalyCount']]\
+        .groupby(by=[category]).sum().reset_index()\
+        .sort_values(by='AnomalyImpact', ascending=False)
+    return sum_df
+
+@app.callback(Output(component_id='accounts', component_property='options'),
+              Input('usage-date-picker-range', 'start_date'),
+              Input('usage-date-picker-range', 'end_date'))
+def update_accounts_output(start_date, end_date):
+    if start_date is not None and end_date is not None:
+        print(f"{start_date =} - {end_date =}")
+        significant_svc_df = \
+                costs_data_svc.get_significant_svc_df(start_date, end_date)
+        print(significant_svc_df)
+        category='GrailAccount'
+        cna_df = get_cost_and_anomaly_weeks_by_category(category,significant_svc_df)
+        cna_df['Label'] =  cna_df.apply(lambda row :html.Span([
+                html.Span(row[category]),
+                html.Span(f'{row["Cost"]:,}', className="badge alert-info"),
+                "|",
+                html.Span({row["AnomalyCount"]}, className="badge alert-danger"),
+            ]),axis=1)
+        return [{'label':label,'value':value} for value,label in cna_df[[category, 'Label']].itertuples(index=False,name=None)]
+
+        # session['significant_svc_df'] = \
+        #     significant_svc_df = \
+        #         costs_data_svc.get_significant_svc_df(start_date, end_date)
+        # return [{
+        #     'label':
+        #     html.Span([
+        #         html.Span(k),
+        #         html.Span("Cost", className="badge alert-info"),
+        #         "|",
+        #         html.Span("Anomaly Count", className="badge alert-danger"),
+        #         html.Span("",
+        #                   className="glyphicon glyphicon-question-sign",
+        #                   title="Grail Account"),
+        #     ]),
+        #     'value':
+        #     k
+        # } for k in significant_svc_df['GrailAccount'].unique().tolist()]
+        # return significant_svc_df['GrailAccount'].unique().tolist()
+    return None
+
+
+@app.callback(Output(component_id='services', component_property='options'),
+              Input('usage-date-picker-range', 'start_date'),
+              Input('usage-date-picker-range', 'end_date'),
+              Input('accounts', 'value'))
+def update_services_output(start_date, end_date, account_list):
+    if account_list is not None:
+        print(f"{account_list =}")
+        significant_svc_df = \
+                costs_data_svc.get_significant_svc_df(start_date, end_date)
+        return significant_svc_df.query('GrailAccount in @account_list')\
+            ['Service'].unique().tolist()
+    return None
 
 
 @app.callback(
@@ -165,5 +279,14 @@ def callback(m, std_dev, n_bins, n):
     return px.histogram(data, nbins=n_bins), None
 
 
+# @app.callback(
+#     Output(component_id='accounts', component_property='options'),
+#     [Input(component_id='update-button', component_property='n_clicks')]
+# )
+# def update_options(n_clicks):
+#     if n_clicks is None:
+#         return [{'label': 'Option 1', 'value': 'option-1'}]
+#     else:
+#         return [{'label': 'Option 2', 'value': 'option-2'}, {'label': 'Option 3', 'value': 'option-3'}]
 if __name__ == "__main__":
     app.run_server(debug=True)

@@ -13,7 +13,7 @@ body {
 }
 
 .shiny-input-container .category-name{
-  width: 150px;
+  width: 80px;
   display: inline-block;
 }
 
@@ -28,7 +28,7 @@ body {
 
 
 #grail_account_group .shiny-options-group {
-  max-height: 120px;
+  max-height: 80px;
   overflow-y: scroll;
 }
 #aws_service_group .shiny-options-group {

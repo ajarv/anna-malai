@@ -24,6 +24,15 @@ def create_ui(df: pd.DataFrame):
         ui.row(
             ui.column(2),
             ui.column(
+                6,
+                # an output container in which to render a plot
+                ui.output_plot("out", width="100%", height="600px"),
+                ui.output_text_verbatim("txt"),
+            ),
+        ),
+        ui.row(
+            ui.column(2),
+            ui.column(
                 3,
                 ui.input_date_range(
                     "date_range",
@@ -38,16 +47,24 @@ def create_ui(df: pd.DataFrame):
             ),
             ui.column(
                 3,
-                ui.input_text("bucket_name_filter", "Bucket Filter:", ""),
+                ui.input_select("facet_column", "Facet", [None,'GrailAccount','BucketName','StorageType']),
+            ),
+            ui.column(
+                3,
+                ui.input_select("color_column", "Color", [None,'GrailAccount','BucketName','StorageType']),
+
+            ),
+            ui.column(
+                1,
+                ui.input_action_button("go",
+                                       "Go Plot!",
+                                       class_="my-3 btn-success"),
             ),
         ),
         ui.row(
             ui.column(2),
             ui.column(
                 10,
-                # an output container in which to render a plot
-                ui.output_plot("out", width="100%", height="400px"),
-                ui.output_text_verbatim("txt"),
                 ui.row(
                     ui.column(
                         3,
@@ -67,6 +84,7 @@ def create_ui(df: pd.DataFrame):
                     ),
                     ui.column(
                         3,
+                        ui.input_text("bucket_name_filter", "Bucket Filter:", ""),
                         ui.input_checkbox_group(
                             "bucket_group",
                             "Buckets",
@@ -88,31 +106,63 @@ def create_ui(df: pd.DataFrame):
 
 
 # utility function to draw a scatter plot
-def create_plot(df):
-    xdf = df[['timestamp', 'BucketName', 'Bytes'
-              ]].groupby(by=['timestamp', 'BucketName']).sum().reset_index()
+def create_plot(df,facet_column=None,fill_column=None):
+    xdf = df[['timestamp', 'BucketName', 'Bytes', 'GrailAccount','StorageType']].groupby(
+        by=['timestamp', 'BucketName', 'GrailAccount','StorageType']).sum().reset_index()
     xdf['PetaBytes'] = (xdf['Bytes'] * 1e-15).round(2)
-    plot = (gg.ggplot(
-        xdf, gg.aes(x='timestamp', y='PetaBytes', fill="BucketName")) +
+
+
+    if fill_column:
+        plot = (
+            gg.ggplot(xdf, gg.aes(x='timestamp', y='PetaBytes', fill=fill_column))+
             gg.geom_bar(stat="identity") +
-            gg.theme(axis_text_x=gg.element_text(angle=15, hjust=1)))
+            gg.theme_linedraw() +
+            gg.theme(legend_position="top",
+                    axis_text_x=gg.element_text(angle=15, hjust=1),
+                    text=gg.element_text(size=12)) +
+            gg.labs(
+                title=f"Daily Volume Snapshot", x="Date", y=f"Size in Peta Bytes"))
+    else:
+        plot = (
+            gg.ggplot(xdf, gg.aes(x='timestamp', y='PetaBytes'))+
+            gg.geom_bar(stat="identity") +
+            gg.theme_linedraw() +
+            gg.theme(legend_position="top",
+                    axis_text_x=gg.element_text(angle=15, hjust=1),
+                    text=gg.element_text(size=12)) +
+            gg.labs(
+                title=f"Daily Volume Snapshot", x="Date", y=f"Size in Peta Bytes"))
+
+    if facet_column:
+        plot += gg.facet_grid(f"{facet_column} ~ .", scales="free", space="free")
+
     return plot.draw()
 
 
 def create_bucket_plot(df):
-    xdf = df[['timestamp', 'StorageType', 'Bytes'
-              ]].groupby(by=['timestamp', 'StorageType']).sum().reset_index()
+    xdf = df[[
+        'timestamp', 'StorageType', 'Bytes', 'GrailAccount', "BucketName"
+    ]].groupby(by=['timestamp', 'StorageType', 'GrailAccount', "BucketName"
+                   ]).sum().reset_index()
     xdf['PetaBytes'] = (xdf['Bytes'] * 1e-15).round(2)
-    print(xdf.head())
-    plot = (gg.ggplot(
-        xdf, gg.aes(x='timestamp', y='PetaBytes', fill="StorageType")) +
-            gg.geom_bar(stat="identity") +
-            gg.theme(axis_text_x=gg.element_text(angle=15, hjust=1)))
+    # print(xdf.head())
+    plot = (
+        gg.ggplot(xdf, gg.aes(x='timestamp', y='PetaBytes', fill="BucketName"))
+        + gg.geom_bar(stat="identity") +
+        gg.facet_grid("GrailAccount ~ .", scales="free", space="free") +
+        gg.theme_linedraw() +
+        gg.theme(legend_position="bottom",
+                 axis_text_x=gg.element_text(angle=15, hjust=1),
+                 text=gg.element_text(size=14)) +
+        gg.labs(
+            title=f"Daily Volume Snapshot", x="Date", y=f"Size in Peta Bytes"))
+
     return plot.draw()
 
 
 # wrapper function for the server, allows the data
 # to be passed in
+
 
 def get_cat_sizes_dict(category, fdf, session_cache):
     cat_dict_old = session_cache.get(category, {})
@@ -238,47 +288,52 @@ def create_server(df):
         def txt():
             grail_account = input.grail_account_group()
             pipeline_stage = input.pipeline_stage_group()
-            bucket_name_filter = input.bucket_name_filter().strip()
             with reactive.isolate():
                 startD, endD = input.date_range()
-            df_query = f"GrailAccount in @grail_account " + \
-                        f" and timestamp >= @startD and timestamp < @endD" + \
-                        f" and PipelineBucketType in @pipeline_stage"
-            if bucket_name_filter != '':
-                df_query += f" and BucketName.str.contains(@bucket_name_filter)"
+            bucket_list = input.bucket_group()
+            storage_tiers = input.storage_tier_group()
+
+
+            df_query = f"timestamp >= {startD} and timestamp < {endD} "
+            if len(bucket_list) > 0:
+                df_query += f" and BucketName in {bucket_list}" 
+            if len(grail_account) > 0:
+                df_query += f" and GrailAccount in {grail_account}" 
+            if len(pipeline_stage) > 0 :
+                df_query += f" and PipelineBucketType in {pipeline_stage}"
+            if len(storage_tiers) > 0:
+                df_query += f" and StorageType in {storage_tiers}"
             return df_query
 
         @output(id="out"
                 )  # decorator to link this function to the "out" id in the UI
         @render.plot  # a decorator to indicate we want the plot renderer
+        @reactive.event(input.go, ignore_none=False)
         def plot():
             grail_account = input.grail_account_group()
-            pipeline_stage = input.pipeline_stage_group() 
+            pipeline_stage = input.pipeline_stage_group()
             bucket_name_filter = input.bucket_name_filter().strip()
             storage_tiers = input.storage_tier_group()
             with reactive.isolate():
                 startD, endD = input.date_range()
             bucket_list = input.bucket_group()
 
-            df_query = "timestamp >= @startD and timestamp < @endD " 
-            if len(bucket_list) == 0:
-              df_query += " and GrailAccount in @grail_account" + \
-                  " and PipelineBucketType in @pipeline_stage"
-              if len(storage_tiers) > 0:
+            fill_column = input.color_column()
+            facet_column = input.facet_column()
+
+            df_query = "timestamp >= @startD and timestamp < @endD "
+            if len(bucket_list) > 0:
+                df_query += " and BucketName in @bucket_list" 
+            if len(grail_account) > 0:
+                df_query += " and GrailAccount in @grail_account" 
+            if len(pipeline_stage) > 0 :
+                df_query += " and PipelineBucketType in @pipeline_stage"
+            if len(storage_tiers) > 0:
                 df_query += " and StorageType in @storage_tiers"
-              sub = df.query(df_query).copy()  # use it to create a subset
-              if sub.shape[0] == 0: return
-              plot = create_plot(sub)  # create our plot
-              return plot  # and return it
-            else:
-              df_query = "BucketName in @bucket_list " + \
-                        " and timestamp >= @startD and timestamp < @endD"
-              if len(storage_tiers) > 0:
-                df_query += " and StorageType in @storage_tiers"
-              sub = df.query(df_query).copy()  # use it to create a subset
-              if sub.shape[0] == 0: return
-              plot = create_bucket_plot(sub)  # create our plot
-              return plot  # and return it
+            sub = df.query(df_query).copy()  # use it to create a subset
+            if sub.shape[0] == 0: return
+            plot = create_plot(sub,facet_column=facet_column    ,fill_column=fill_column)  # create our plot
+            return plot  # and return it
 
     return f
 

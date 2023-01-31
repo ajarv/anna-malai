@@ -75,3 +75,7 @@
 .selection-menu {
     font-size: small;
 }
+
+.user-cb-options label {
+    margin: 2px 4px;
+}

@@ -39,45 +39,41 @@ def detect_anomalies_laymans_way_01(data):
     data['Anomaly'] = data['Anomaly_Score'] > 0
     return data
 
-def detect_anomalies_hist_ma(in_df,value_column='MetricValue'):
-    orig_columns = list(in_df.columns)
-    def return_df(_df):
-        return _df[orig_columns+['Anomaly', 'Anomaly_Score']]
-    data = in_df.copy()
+def detect_anomalies_hist_ma(data,value_column='MetricValue'):
+    data_copy = data.copy()
     if data.shape[0] < 30:
         print(f"Can not detect anomalies with fewer than a month's reads")
-        data['Anomaly'] = False
-        data['Anomaly_Score'] = -1
-        return return_df(data)
+        data_copy['Anomaly'] = False
+        data_copy['Anomaly_Score'] = -1
+        return data_copy
 
-    data['timestamp_wk'] = data['timestamp'].apply(lambda x: x.strftime('%Y-%V'))
     data['day_name'] = data['timestamp'].apply(lambda t: t.day_name())
-
-    data_w = data[['timestamp_wk',value_column]].groupby('timestamp_wk').sum().reset_index()
-    data_w[f'{value_column}_sum'] = data_w[value_column]
-
-    data_w_max = data[['timestamp_wk',value_column]].groupby('timestamp_wk').max().reset_index()
-    data_w[f'{value_column}_max'] = data_w_max[value_column]
-    
-    # data['MA7'] = data[value_column].rolling(7).mean().fillna(0)+0.0001
-    # data_w = data[data['day_name'] == 'Monday']
-    data_w['MA7WD'] = data_w[f'{value_column}_sum'].diff().fillna(0)
-    data_w = data_w[['timestamp_wk','MA7WD',f'{value_column}_max']]
-    data_w.set_index('timestamp_wk', drop=True, inplace=True)
-    if data_w.shape[0] < 4:
+    data['MA7'] = data[value_column].rolling(7).mean().fillna(0)+0.0001
+    data = data[data['day_name'] == 'Saturday']
+    data_copy_w = data.copy().reset_index()
+    data['MA7WD'] = data['MA7'].diff().fillna(0)
+    data = data[['timestamp','MA7WD']]
+    data.set_index('timestamp', drop=True, inplace=True)
+    if data.shape[0] < 4:
         print(f"Can not detect anomalies with fewer than a four weeks's reads")
-        data['Anomaly'] = False
-        data['Anomaly_Score'] = -1
-        return return_df(data)
+        data_copy['Anomaly'] = False
+        data_copy['Anomaly_Score'] = -1
+        return data_copy
     
-    s = setup(data_w, session_id = 123,verbose=False)
+    s = setup(data, session_id = 123,verbose=False)
     model = create_model('histogram', fraction = 0.1)
     model_results = assign_model(model)
     
-    model_results['timestamp_wk'] = data_w.reset_index()["timestamp_wk"]
+    model_results['timestamp'] = data_copy_w['timestamp'].apply(lambda x: x.strftime('%Y-%V'))
     
-    data_with_anomaly_info =  data.join(model_results\
-        [['timestamp_wk','Anomaly', 'Anomaly_Score']].set_index('timestamp_wk'),on='timestamp_wk')
-    data_with_anomaly_info['Anomaly'] = data_with_anomaly_info['Anomaly'].fillna(False) > 0
-    data_with_anomaly_info['Anomaly_Score'] = data_with_anomaly_info['Anomaly_Score'].fillna(-1)
-    return return_df(data_with_anomaly_info.reset_index())
+    results_df = model_results[['timestamp','Anomaly', 'Anomaly_Score']].set_index('timestamp')
+    
+    orig_columns = list(data_copy.columns)
+
+    data_copy['timestamp_yw'] = data_copy['timestamp'].apply(lambda x: x.strftime('%Y-%V'))
+
+    data_with_anomaly_info =  data_copy.join(results_df,on='timestamp_yw').fillna(-1)
+    data_with_anomaly_info['Anomaly'] = data_with_anomaly_info['Anomaly'] == 1
+
+    data_with_anomaly_info =  data_with_anomaly_info[ orig_columns + ['Anomaly', 'Anomaly_Score']]
+    return data_with_anomaly_info
