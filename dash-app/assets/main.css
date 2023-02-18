@@ -77,5 +77,15 @@
 }
 
 .user-cb-options label {
+    display: block;
     margin: 2px 4px;
 }
+
+.user-cb-options label .category-name {
+  width: 180px;
+  display: inline-block;
+ }
+
+ .cb-checkbox {
+    margin-right:  3px
+ }

@@ -1,19 +1,18 @@
 import sqlalchemy
 import pandas as pd
 import os
-import time 
+import time
 import datetime
 import anomaly_svc
 from typing import List
 
 
-
 class ComputeUsageAggregator:
-    def __init__(self,usage_type_token='SpotUsage'):
+    def __init__(self, usage_type_token='SpotUsage'):
         self.usage_type_token = usage_type_token
         self.service = "Amazon Elastic Compute Cloud - Compute"
-        
-    def get_ut_group_dfs(self,df: pd.DataFrame)->List[pd.DataFrame]:
+
+    def get_ut_group_dfs(self, df: pd.DataFrame) -> List[pd.DataFrame]:
         service = self.service
         usage_type_token = self.usage_type_token
         df_query = "Service == @service and UsageType.str.contains(@usage_type_token)"
@@ -23,11 +22,11 @@ class ComputeUsageAggregator:
         for ut in all_usage_types:
             usage_type_groups.add(ut.split(':')[0])
             # usage_type_groups.add(ut.split('.')[0])
-        
+
         columns = df.columns
-        value_cols = ['UnitsUsed','Cost']
-        sub_cols = list(set(columns)-set(['UsageType']))
-        group_by_cols = list(set(sub_cols) -set(value_cols))
+        value_cols = ['UnitsUsed', 'Cost']
+        sub_cols = list(set(columns) - set(['UsageType']))
+        group_by_cols = list(set(sub_cols) - set(value_cols))
 
         group_dataframes = []
         for ut_group in usage_type_groups:
@@ -36,16 +35,15 @@ class ComputeUsageAggregator:
             sub_data['UsageType'] = f"{ut_group}:all.all"
             sub_data = sub_data[columns]
             group_dataframes.append(sub_data)
-            
-        return group_dataframes
-        
 
-    def extend_and_drop(self,df: pd.DataFrame):
+        return group_dataframes
+
+    def extend_and_drop(self, df: pd.DataFrame):
         service = self.service
         usage_type_token = self.usage_type_token
         df_query = "not( Service == @service and UsageType.str.contains(@usage_type_token) )"
         group_dataframes = self.get_ut_group_dfs(df)
-        return pd.concat([df.query(df_query)]+group_dataframes)
+        return pd.concat([df.query(df_query)] + group_dataframes)
 
 
 def get_mysql_engine():
@@ -63,6 +61,7 @@ def get_mysql_engine():
     engine = sqlalchemy.create_engine(db_url, pool_recycle=1, pool_timeout=57600)
     return engine
 
+
 def get_df():
     query = """
         SELECT 
@@ -74,19 +73,21 @@ def get_df():
         GROUP BY CallerType,CallerName,AccessType,Bucket,GrailAccount
         ORDER BY CallCount DESC
     """
-    df = pd.read_sql(query,get_mysql_engine())
+    df = pd.read_sql(query, get_mysql_engine())
     return df
 
+
 def get_cnu_df():
-    BASE_PATH='/Users/avashisth/workspace/aws-util/cost-explorer/data'
+    BASE_PATH = '/Users/avashisth/workspace/aws-util/cost-explorer/data'
     gaccts = ['clinical', 'grail-sysinfra-eng', 'eng', 'grail-sysinfra-prod', 'grail-prod-galleri', 'msk',
-            'aws-grail-sequence-data-archives', 'grail-prod-mrd']
+              'aws-grail-sequence-data-archives', 'grail-prod-mrd']
     df = pd.concat([
         pd.read_csv(f'{BASE_PATH}/metrics/{account}/cost-n-usage-x-svc-usetype.csv.gz')
         for account in gaccts
-    ])    
-    
-    dfu = df.query('MetricName == "UsageQuantity"')[['Start', 'GrailAccount', 'SERVICE', 'USAGE_TYPE', 'Unit', 'Amount']]
+    ])
+
+    dfu = df.query('MetricName == "UsageQuantity"')[
+        ['Start', 'GrailAccount', 'SERVICE', 'USAGE_TYPE', 'Unit', 'Amount']]
     dfu.columns = ['Start', 'GrailAccount', 'Service', 'UsageType', 'UsageUnit', 'UnitsUsed']
 
     dfc = df.query('MetricName == "BlendedCost"')[['Start', 'GrailAccount', 'SERVICE', 'USAGE_TYPE', 'Unit', 'Amount']]
@@ -94,16 +95,15 @@ def get_cnu_df():
 
     # dfc.shape,dfu.shape
 
+    dfc = dfc.set_index(['Start', 'GrailAccount', 'Service', 'UsageType']) \
+        .join(dfu.set_index(['Start', 'GrailAccount', 'Service', 'UsageType']), how='left').reset_index()
 
-    dfc = dfc.set_index(['Start', 'GrailAccount', 'Service', 'UsageType'])\
-        .join(dfu.set_index(['Start', 'GrailAccount', 'Service', 'UsageType']),how='left').reset_index()
-    
     dfc['UsageMonth'] = dfc['Start'].apply(lambda x: f'{x[:7]}-01')
     dfc['UsageUnit'] = dfc['UsageUnit'].fillna('NotAvailable')
-    dfc['timestamp'] = pd.to_datetime(dfc['Start'])           
-
+    dfc['timestamp'] = pd.to_datetime(dfc['Start'])
 
     return dfc
+
 
 # def get_cnu_df():
 
@@ -152,39 +152,43 @@ def get_cnu_df_with_grouped_usages():
     df = boxUsageAggregator.extend_and_drop(df)
     return df
 
-def get_anomalies(df,grail_acct,service,usage_type,model='laymans_way'):
-    df_query = "GrailAccount == @grail_acct"+\
-        " and Service == @service  "+\
-        " and UsageType == @usage_type " 
-    data = df.query(df_query)[['timestamp','GrailAccount','Service','UsageType','Cost']].reset_index()
-    data_with_anomaly_info = anomaly_svc.detect_anomalies(data[['timestamp','Cost']],model=model)
-    data['Anomaly'] = data_with_anomaly_info['Anomaly'] == 1 
+
+def get_anomalies(df, grail_acct, service, usage_type, model='laymans_way'):
+    df_query = "GrailAccount == @grail_acct" + \
+               " and Service == @service  " + \
+               " and UsageType == @usage_type "
+    data = df.query(df_query)[['timestamp', 'GrailAccount', 'Service', 'UsageType', 'Cost']].reset_index()
+    data_with_anomaly_info = anomaly_svc.detect_anomalies(data[['timestamp', 'Cost']], model=model)
+    data['Anomaly'] = data_with_anomaly_info['Anomaly'] == 1
     data['Anomaly_Score'] = data_with_anomaly_info['Anomaly_Score']
     return data
 
-def get_anomalies_using_ma(df,grail_acct,service,usage_type,usage_unit):
-    df_query = "GrailAccount == @grail_acct"+\
-        " and Service == @service  "+\
-        " and UsageType == @usage_type and UsageUnit == @usage_unit" 
+
+def get_anomalies_using_ma(df, grail_acct, service, usage_type, usage_unit):
+    df_query = "GrailAccount == @grail_acct" + \
+               " and Service == @service  " + \
+               " and UsageType == @usage_type and UsageUnit == @usage_unit"
     data = df.query(df_query).reset_index()[df.columns]
-    data_with_anomaly_info = anomaly_svc.detect_anomalies_hist_ma(data,'Cost')
+    data_with_anomaly_info = anomaly_svc.detect_anomalies_hist_ma(data, 'Cost')
     return data_with_anomaly_info
 
 
 cnu_with_anomaly_info_path = '/Users/avashisth/sandbox/R/cnu_with_anomaly_info.csv.gz'
+
+
 def get_cnu_df_with_anomaly_info():
     if os.path.exists(cnu_with_anomaly_info_path) \
-        and time.time() - os.path.getmtime(cnu_with_anomaly_info_path) < 3600*24 :
+            and time.time() - os.path.getmtime(cnu_with_anomaly_info_path) < 3600 * 24:
         cnu_with_anomaly_info = pd.read_csv(cnu_with_anomaly_info_path)
         cnu_with_anomaly_info['timestamp'] = pd.to_datetime(cnu_with_anomaly_info['timestamp'])
         return cnu_with_anomaly_info
 
     df = get_cnu_df_with_grouped_usages()
-    significant_svc_ut_df = df[['Service', 'UsageType', 'GrailAccount', 'UsageUnit','Cost']]\
-            .groupby(by=['Service', 'UsageType', 'GrailAccount', 'UsageUnit'])\
-            .sum().reset_index()\
-            .query('Cost > 0')\
-            .sort_values(by='Cost',ascending=False).copy()
+    significant_svc_ut_df = df[['Service', 'UsageType', 'GrailAccount', 'UsageUnit', 'Cost']] \
+        .groupby(by=['Service', 'UsageType', 'GrailAccount', 'UsageUnit']) \
+        .sum().reset_index() \
+        .query('Cost > 0') \
+        .sort_values(by='Cost', ascending=False).copy()
 
     df_with_anomalies_info_list = []
     for index, row in significant_svc_ut_df.iterrows():
@@ -193,21 +197,21 @@ def get_cnu_df_with_anomaly_info():
         usage_type = row['UsageType']
         usage_unit = row['UsageUnit']
         print(f'{grail_account} | {service} | {usage_type} | {usage_unit}')
-        df_with_anomalies_info_list.append(get_anomalies_using_ma(df,grail_account,service,usage_type,usage_unit))
-    cnu_with_anomaly_info = pd.concat(df_with_anomalies_info_list)\
-        .sort_values(by=['timestamp','Service','UsageType'])
-    cnu_with_anomaly_info.to_csv(cnu_with_anomaly_info_path,index=False)
+        df_with_anomalies_info_list.append(get_anomalies_using_ma(df, grail_account, service, usage_type, usage_unit))
+    cnu_with_anomaly_info = pd.concat(df_with_anomalies_info_list) \
+        .sort_values(by=['timestamp', 'Service', 'UsageType'])
+    cnu_with_anomaly_info.to_csv(cnu_with_anomaly_info_path, index=False)
     return cnu_with_anomaly_info
 
 
-def get_significant_svc_df(startD,endD):
+def get_significant_svc_df(startD, endD):
     df = get_cnu_df_with_anomaly_info()
-    significant_svc_ut_df = df.query('timestamp >= @startD and timestamp < @endD')\
-        [['Service', 'UsageType', 'GrailAccount', 'UsageUnit','Cost','Anomaly']]\
-            .groupby(by=['Service', 'UsageType', 'GrailAccount', 'UsageUnit'])\
-            .sum().reset_index()\
-            .query('Cost > 0')\
-            .sort_values(by='Cost',ascending=False).copy()
+    significant_svc_ut_df = df.query('timestamp >= @startD and timestamp < @endD') \
+        [['Service', 'UsageType', 'GrailAccount', 'UsageUnit', 'Cost', 'Anomaly']] \
+        .groupby(by=['Service', 'UsageType', 'GrailAccount', 'UsageUnit']) \
+        .sum().reset_index() \
+        .query('Cost > 0') \
+        .sort_values(by='Cost', ascending=False).copy()
 
     return significant_svc_ut_df
 

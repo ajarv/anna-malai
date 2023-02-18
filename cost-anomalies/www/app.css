@@ -4,7 +4,6 @@
 body {
   font-size: small;
   font-family: Roboto,'Courier New', Courier, monospace;
-
 }
 
 /* Change header text to imported font */
@@ -12,9 +11,23 @@ body {
   color: #474747;
 }
 
-.shiny-input-container .category-name{
-  width: 80px;
+.control-label{
+    border-bottom: #999 1pt solid;
+    font-weight: bold;
+}
+
+.shiny-input-container .option-item{
+  max-width: 300px;
   display: inline-block;
+}
+
+.shiny-input-container .category-name{
+  display: inline-block;
+}
+
+.shiny-input-container .category-parent {
+  font-size: xx-small;
+  color: navy;
 }
 
 .title-area p {
@@ -28,11 +41,11 @@ body {
 
 
 #grail_account_group .shiny-options-group {
-  max-height: 80px;
+  max-height: 160px;
   overflow-y: scroll;
 }
 #aws_service_group .shiny-options-group {
-  max-height: 100px;
+  max-height: 200px;
   overflow-y: scroll;
 }
 #aws_service_feature_group .shiny-options-group {
