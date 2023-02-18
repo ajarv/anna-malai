@@ -11,7 +11,6 @@ import data_svc
 # function that creates our UI based on the data
 # we give it
 def create_ui(df: pd.DataFrame):
-
     max_date = df['timestamp'].max()
     min_date = df['timestamp'].min()
     start_date = max_date - datetime.timedelta(days=61)
@@ -22,9 +21,19 @@ def create_ui(df: pd.DataFrame):
         # row and column here are functions
         # to aid laying out our page in an organised fashion
         ui.row(
-            ui.column(2),
+            ui.column(1),
             ui.column(
-                3,
+                10,
+                # an output container in which to render a plot
+                ui.h1("S3 Bucket Stats"),
+                ui.output_text("txt"),
+                ui.output_plot("out", width="100%", height="600px"),
+            ),
+        ),
+        ui.row(
+            ui.column(1),
+            ui.column(
+                2,
                 ui.input_date_range(
                     "date_range",
                     "Date range:",
@@ -37,17 +46,46 @@ def create_ui(df: pd.DataFrame):
                 ),
             ),
             ui.column(
-                3,
-                ui.input_text("bucket_name_filter", "Bucket Filter:", ""),
+                2,
+                ui.input_select("facet_column", "Facet",
+                                [None, 'GrailAccount', 'BucketName', 'StorageType', 'PipelineBucketType']),
+            ),
+            ui.column(
+                2,
+                ui.input_select("color_column", "Color",
+                                [None, 'GrailAccount', 'BucketName', 'StorageType', 'PipelineBucketType']),
+
+            ),
+            ui.column(
+                2,
+                ui.input_switch("usage_cost_switch", "Switch  Usage/Cost"),
+            ),
+            ui.column(
+                1,
+                ui.input_action_button("go",
+                                       "Go Plot!",
+                                       class_="my-3 btn-success"),
             ),
         ),
         ui.row(
-            ui.column(2),
+            ui.column(6),
+            ui.column(
+                1,
+                ui.input_checkbox("all_buckets_check", "Select all Buckets", ""),
+            ),
+            ui.column(
+                2,
+                ui.input_text("bucket_name_filter", "Bucket Filter:", ""),
+            ),
+            ui.column(
+                1,
+                ui.input_checkbox("all_tiers_check", "Select all Tiers", ""),
+            ),
+        ),
+        ui.row(
+            ui.column(1),
             ui.column(
                 10,
-                # an output container in which to render a plot
-                ui.output_plot("out", width="100%", height="400px"),
-                ui.output_text_verbatim("txt"),
                 ui.row(
                     ui.column(
                         3,
@@ -88,45 +126,96 @@ def create_ui(df: pd.DataFrame):
 
 
 # utility function to draw a scatter plot
-def create_plot(df):
-    xdf = df[['timestamp', 'BucketName', 'Bytes'
-              ]].groupby(by=['timestamp', 'BucketName']).sum().reset_index()
+def create_plot(df, facet_column=None, fill_column=None,usage_cost_switch=False):
+    xdf = df[['timestamp', 'BucketName', 'Bytes', 'GrailAccount', 'StorageType', 'PipelineBucketType','DailyCost']].groupby(
+        by=['timestamp', 'BucketName', 'GrailAccount', 'StorageType', 'PipelineBucketType']).sum().reset_index()
     xdf['PetaBytes'] = (xdf['Bytes'] * 1e-15).round(2)
-    plot = (gg.ggplot(
-        xdf, gg.aes(x='timestamp', y='PetaBytes', fill="BucketName")) +
-            gg.geom_bar(stat="identity") +
-            gg.theme(axis_text_x=gg.element_text(angle=15, hjust=1)))
+    print(xdf.head())
+    value_column = 'PetaBytes' if not usage_cost_switch else 'DailyCost'
+    value_column_title = f"Size in Peta Bytes" if not usage_cost_switch else 'Daily Cost USD'
+    nsize = (df[['timestamp','Bytes']].groupby(by=['timestamp']).sum() *1e-15)['Bytes'].mean().round(2)
+    ncost = (df['DailyCost'].sum()).round(0)
+    if fill_column:
+        plot = (
+                gg.ggplot(xdf, gg.aes(x='timestamp', y=value_column, fill=fill_column)) +
+                gg.geom_bar(stat="identity") +
+                gg.theme_linedraw() +
+                gg.theme(legend_position="left",
+                     # plot_margin=(10,10,10,10,),
+                     # legend_margin=(10,10,10,10,),
+                     figure_size=(8, 8),  # inches
+                     axis_text_x=gg.element_text(angle=15, hjust=1),
+                     text=gg.element_text(size=12)) +
+                gg.labs(
+                    title=f"\nDaily Volume Snapshot\n Selection Cost {int(ncost):,} USD, Size {nsize} PB", x="Date", y=value_column_title))
+    else:
+        plot = (
+                gg.ggplot(xdf, gg.aes(x='timestamp', y=value_column)) +
+                gg.geom_bar(stat="identity") +
+                gg.theme_linedraw() +
+                gg.theme(legend_position="left",
+                     # plot_margin=(10,10,10,10,),
+                     # legend_margin=(10,10,10,10,),
+                     figure_size=(8, 8),  # inches
+                     axis_text_x=gg.element_text(angle=15, hjust=1),
+                     text=gg.element_text(size=12)) +
+                gg.labs(
+                    title=f"\nDaily Volume Snapshot\n Selection Cost {int(ncost):,} USD, Size {nsize} PB", x="Date", y=value_column_title))
+
+    if facet_column:
+        plot += gg.facet_grid(f"{facet_column} ~ .", scales="free", space="free")
+
     return plot.draw()
 
 
 def create_bucket_plot(df):
-    xdf = df[['timestamp', 'StorageType', 'Bytes'
-              ]].groupby(by=['timestamp', 'StorageType']).sum().reset_index()
+    xdf = df[[
+        'timestamp', 'StorageType', 'Bytes',
+        'GrailAccount', "BucketName", 'PipelineBucketType'
+    ]].groupby(by=[
+        'timestamp', 'StorageType',
+        'GrailAccount', "BucketName", 'PipelineBucketType']).sum().reset_index()
     xdf['PetaBytes'] = (xdf['Bytes'] * 1e-15).round(2)
-    print(xdf.head())
-    plot = (gg.ggplot(
-        xdf, gg.aes(x='timestamp', y='PetaBytes', fill="StorageType")) +
-            gg.geom_bar(stat="identity") +
-            gg.theme(axis_text_x=gg.element_text(angle=15, hjust=1)))
+    # print(xdf.head())
+    plot = (
+            gg.ggplot(xdf, gg.aes(x='timestamp', y='PetaBytes', fill="BucketName"))
+            + gg.geom_bar(stat="identity") +
+            gg.facet_grid("GrailAccount ~ .", scales="free", space="free") +
+            gg.theme_linedraw() +
+            gg.theme(legend_position="left",
+                     plot_margin=(10,10,10,10,),
+                     legend_margin=(10,10,10,10,),
+                     figure_size=(8, 8),  # inches
+                     axis_text_x=gg.element_text(angle=15, hjust=1),
+                     text=gg.element_text(size=12)) +
+            gg.labs(
+                title=f"Daily Volume Snapshot", x="Date", y=f"Size in Peta Bytes"))
+
     return plot.draw()
 
 
 # wrapper function for the server, allows the data
 # to be passed in
 
+
 def get_cat_sizes_dict(category, fdf, session_cache):
     cat_dict_old = session_cache.get(category, {})
     session_cache[category] = {}
     cat_dict = session_cache[category]
 
-    cat_sizes = fdf[[category,'timestamp','Bytes']]\
-      .groupby(by=[category,'timestamp']).sum().reset_index()\
-      .groupby(by=[category]).mean(numeric_only=True).reset_index().sort_values(by='Bytes',ascending=False)
+    cat_sizes = fdf[[category, 'timestamp', 'Bytes','DailyCost']] \
+        .groupby(by=[category, 'timestamp']).sum().reset_index() \
+        .groupby(by=[category]).mean(numeric_only=True).reset_index().sort_values(by='Bytes', ascending=False)
     cat_sizes['PBytes'] = (cat_sizes["Bytes"] * 1e-15).round(2)
+    cat_sizes['DailyCost'] = (cat_sizes["DailyCost"]).round(2)
     # cat_sizes['Label'] = cat_sizes.apply(
     #     lambda row: f'{row[category]} ({row["PBytes"]:,}) ', axis=1)
     cat_sizes['Label'] = cat_sizes.apply(lambda row: ui.HTML(
-        f'<span> <span class="category-name">{row[category]}</span> <span class="badge alert-info">{row["PBytes"]} PB</span></span>'
+        f'''<span class="option-item">
+    <span class="category-name">{row[category]}</span> 
+    <span class="badge alert-info">{row["PBytes"]} PB</span>|
+    <span class="badge alert-warning">{row["DailyCost"]}</span>
+</span>'''
     ),
                                          axis=1)
 
@@ -137,7 +226,6 @@ def get_cat_sizes_dict(category, fdf, session_cache):
 
 
 def create_server(df):
-
     def f(input, output, session):
         session_cache = {}
 
@@ -166,8 +254,8 @@ def create_server(df):
             pipeline_stage = input.pipeline_stage_group()
             with reactive.isolate():
                 startD, endD = input.date_range()
-            df_query =  "timestamp >= @startD and timestamp < @endD" + \
-                        f" and PipelineBucketType in @pipeline_stage"
+            df_query = "timestamp >= @startD and timestamp < @endD" + \
+                       f" and PipelineBucketType in @pipeline_stage"
             fdf = df.query(df_query)
             category = 'GrailAccount'
             cat_dict, cat_sizes = get_cat_sizes_dict(category, fdf,
@@ -191,9 +279,9 @@ def create_server(df):
             with reactive.isolate():
                 startD, endD = input.date_range()
 
-            df_query =  "timestamp >= @startD and timestamp < @endD" + \
-                        f" and GrailAccount in @grail_account" +\
-                        f" and PipelineBucketType in @pipeline_stage"
+            df_query = "timestamp >= @startD and timestamp < @endD" + \
+                       f" and GrailAccount in @grail_account" + \
+                       f" and PipelineBucketType in @pipeline_stage"
             if bucket_name_filter != '':
                 df_query += f" and BucketName.str.contains(@bucket_name_filter)"
             fdf = df.query(df_query)
@@ -201,9 +289,9 @@ def create_server(df):
             cat_dict, cat_sizes = get_cat_sizes_dict(category, fdf,
                                                      session_cache)
             choices = {k: v[0] for k, v in cat_dict.items()}
-            selected = [k for k, v in cat_dict.items() if v[1]] or list(
-                cat_dict.keys())[:1]
-
+            selected = [k for k, v in cat_dict.items() if v[1]] or \
+                       (list(cat_dict.keys())[:1] if not input.all_buckets_check() \
+                            else  list(cat_dict.keys()))
             ui.update_checkbox_group(
                 "bucket_group",
                 choices=choices,
@@ -218,14 +306,15 @@ def create_server(df):
                 startD, endD = input.date_range()
 
             df_query = f"BucketName in @bucket_list " + \
-                        f" and timestamp >= @startD and timestamp < @endD"
+                       f" and timestamp >= @startD and timestamp < @endD"
             fdf = df.query(df_query)
             category = 'StorageType'
             cat_dict, cat_sizes = get_cat_sizes_dict(category, fdf,
                                                      session_cache)
             choices = {k: v[0] for k, v in cat_dict.items()}
-            selected = [k for k, v in cat_dict.items() if v[1]] or list(
-                cat_dict.keys())[:1]
+            selected = [k for k, v in cat_dict.items() if v[1]] or \
+                       (list(cat_dict.keys())[:1] if not input.all_tiers_check() \
+                            else list(cat_dict.keys()))
 
             ui.update_checkbox_group(
                 "storage_tier_group",
@@ -238,47 +327,52 @@ def create_server(df):
         def txt():
             grail_account = input.grail_account_group()
             pipeline_stage = input.pipeline_stage_group()
-            bucket_name_filter = input.bucket_name_filter().strip()
             with reactive.isolate():
                 startD, endD = input.date_range()
-            df_query = f"GrailAccount in @grail_account " + \
-                        f" and timestamp >= @startD and timestamp < @endD" + \
-                        f" and PipelineBucketType in @pipeline_stage"
-            if bucket_name_filter != '':
-                df_query += f" and BucketName.str.contains(@bucket_name_filter)"
+            bucket_list = input.bucket_group()
+            storage_tiers = input.storage_tier_group()
+
+            df_query = f"timestamp >= {startD} and timestamp < {endD} "
+            if len(bucket_list) > 0:
+                df_query += f" and BucketName in {bucket_list}"
+            if len(grail_account) > 0:
+                df_query += f" and GrailAccount in {grail_account}"
+            if len(pipeline_stage) > 0:
+                df_query += f" and PipelineBucketType in {pipeline_stage}"
+            if len(storage_tiers) > 0:
+                df_query += f" and StorageType in {storage_tiers}"
             return df_query
 
         @output(id="out"
                 )  # decorator to link this function to the "out" id in the UI
         @render.plot  # a decorator to indicate we want the plot renderer
+        @reactive.event(input.go, ignore_none=False)
         def plot():
             grail_account = input.grail_account_group()
-            pipeline_stage = input.pipeline_stage_group() 
+            pipeline_stage = input.pipeline_stage_group()
             bucket_name_filter = input.bucket_name_filter().strip()
             storage_tiers = input.storage_tier_group()
             with reactive.isolate():
                 startD, endD = input.date_range()
             bucket_list = input.bucket_group()
 
-            df_query = "timestamp >= @startD and timestamp < @endD " 
-            if len(bucket_list) == 0:
-              df_query += " and GrailAccount in @grail_account" + \
-                  " and PipelineBucketType in @pipeline_stage"
-              if len(storage_tiers) > 0:
+            fill_column = input.color_column()
+            facet_column = input.facet_column()
+
+            df_query = "timestamp >= @startD and timestamp < @endD "
+            if len(bucket_list) > 0:
+                df_query += " and BucketName in @bucket_list"
+            if len(grail_account) > 0:
+                df_query += " and GrailAccount in @grail_account"
+            if len(pipeline_stage) > 0:
+                df_query += " and PipelineBucketType in @pipeline_stage"
+            if len(storage_tiers) > 0:
                 df_query += " and StorageType in @storage_tiers"
-              sub = df.query(df_query).copy()  # use it to create a subset
-              if sub.shape[0] == 0: return
-              plot = create_plot(sub)  # create our plot
-              return plot  # and return it
-            else:
-              df_query = "BucketName in @bucket_list " + \
-                        " and timestamp >= @startD and timestamp < @endD"
-              if len(storage_tiers) > 0:
-                df_query += " and StorageType in @storage_tiers"
-              sub = df.query(df_query).copy()  # use it to create a subset
-              if sub.shape[0] == 0: return
-              plot = create_bucket_plot(sub)  # create our plot
-              return plot  # and return it
+            sub = df.query(df_query).copy()  # use it to create a subset
+            if sub.shape[0] == 0: return
+            usage_cost_switch = input.usage_cost_switch()
+            plot = create_plot(sub, facet_column=facet_column, fill_column=fill_column,usage_cost_switch=usage_cost_switch)  # create our plot
+            return plot  # and return it
 
     return f
 
